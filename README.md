@@ -7,19 +7,17 @@ using Google Assistant (voice) and have them automatically synced to your ICA sh
 
 ## Limitations at the Moment
 
-**Polling Interval (Google Keep):**  
+**Polling Interval (Google Keep)**  
 While changes made in Home Assistant are instantly reflected in Google Keep, the reverse is not immediate.  
 The integration polls Google Keep for updates every 15 minutes.  
 Changes made directly in Google Keep will appear in Home Assistant after the next polling cycle.
 [Read more about the limitations here.](https://github.com/watkins-matt/home-assistant-google-keep-sync?tab=readme-ov-file#limitations)
 
-**ICA API:**  
+**ICA API**  
 Changes made to your ICA shopping list (e.g. via the ICA app or website) will **not** appear immediately in Home Assistant.  
 The integration does **not** support real-time updates, so you’ll need to manually trigger a refresh to fetch the latest version of the list.
 
-
 ## Installation via HACS
-
 Add Custom Repository:
 
 Open HACS in Home Assistant.
@@ -30,12 +28,12 @@ Download the Integration and restart Home Assistant.
 
 Configure Integration:
 
-Go to Settings -> Devices & Services.
-Click Add Integration.
-Search for and select Ica Shopping.
-5. Enter your `session_id` and `ica_list_id` which you want to add.
-6. (Optional) Link a `todo` entity to sync with Google Keep.
-Submit
+1. Go to Settings -> Devices & Services.
+1. Click Add Integration.
+1. Search for and select Ica Shopping.
+1. Enter your `session_id` and `ica_list_id` which you want to add.
+1. (Optional) Link a `todo` entity to sync with Google Keep.
+1. Submit
 
 ## How to Get Your `session_id`
 
@@ -63,8 +61,46 @@ https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/row/ab95586e-ffd3-49
 with 'ab95586e-ffd3-4927-bfc7-85d1c5193dbb' being your list_id
 
 
-## Example voice assistant
+## Examples
 
+### Automations for update
+Since ICA does not push updates, you can refresh the list every X minutes:
+
+```yaml
+automation:
+  - alias: "Sync ICA List Every 10 Minutes"
+    trigger:
+      - platform: time_pattern
+        minutes: "/10"
+    action:
+      - service: ica_shopping.refresh
+```
+
+You can also create an automation that refreshes the list when you enter or leave a store.
+This only works for ICA stores you've added as zones in Home Assistant.
+Purchases made in other locations won't trigger any update.
+
+```yaml
+alias: Ica shopping update
+description: ""
+triggers:
+  - trigger: zone
+    entity_id: device_tracker.max
+    zone: zone.ica
+    event: leave
+  - trigger: zone
+    entity_id: device_tracker.max
+    zone: zone.ica
+    event: enter
+conditions: []
+actions:
+  - action: ica_shopping.refresh
+    data: {}
+mode: single
+
+```
+
+### Voice assistant intents
 Add this to configuration.yaml to create an intent to use voice assistant. This code will override the shoppinglist build into voice assistant. 
 
 ```yaml
