@@ -10,6 +10,7 @@ intents:
       - sentences:
           - "lägg till {item} i icas inköpslista"
           - "lägg till {item} i inköpslista"
+          - "lägg till {item} i inköpslistan"
           - "lägg till {item} på inköpslistan"
           - "lägg till {item} i icalistan"
           - "skriv upp {item} på Icas inköpslista"
