@@ -127,6 +127,6 @@ intent_script:
     action:
       - service: ica_shopping.add_item
         data:
-          text: "{{ item | trim }}"
+          text: "{{ name | trim }}"
     speech:
-      text: "Okej, jag lade till {{ item }} på ICA."
+      text: "Okej, jag lade till {{ name }} på ICA-listan."
