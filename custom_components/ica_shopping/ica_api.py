@@ -121,31 +121,6 @@ class ICAApi:
             _LOGGER.error("Error adding item to ICA: %s", e)
             return False
 
-    async def strike_item(self, row_id: str) -> bool:
-        token = await self._get_token_from_session_id()
-        if not token:
-            _LOGGER.error("Kan inte stryka - token saknas")
-            return False
-        url = f"https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/row/{row_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=UTF-8",
-            "Accept": "*/*"
-        }
-        data = {"isStriked": 'true'}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.put(url, headers=headers, json=data) as resp:
-                    if resp.status in (200, 204):
-                        _LOGGER.info("Strök rad %s från ICA", row_id)
-                        return True
-                    else:
-                        _LOGGER.warning("Misslyckades stryka rad %s – status %s", row_id, resp.status)
-                        return False
-        except Exception as e:
-            _LOGGER.error("Fel vid strykning av ICA-rad: %s", e)
-            return False
-
     async def remove_item(self, row_id: str) -> bool:
         token = await self._get_token_from_session_id()
         if not token:
