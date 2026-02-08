@@ -68,6 +68,9 @@ async def async_setup_entry(hass, entry):
         list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
         keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
 
+        # Set sync flag to prevent listener from tracking our own operations
+        hass.data[DOMAIN]["sync_in_progress"] = True
+
         _LOGGER.debug("Debounced Keep -> ICA sync")
         try:
             result = await hass.services.async_call(
@@ -105,9 +108,17 @@ async def async_setup_entry(hass, entry):
 
         except Exception as e:
             _LOGGER.error("Fel vid sync_keep_to_ica: %s", e)
+        finally:
+            # Always reset sync flag
+            hass.data[DOMAIN]["sync_in_progress"] = False
 
     def call_service_listener(event):
         nonlocal debounce_unsub
+
+        # Skip if sync is in progress (to avoid tracking our own sync operations)
+        if hass.data[DOMAIN].get("sync_in_progress", False):
+            _LOGGER.debug("Ignorerar call_service under pågående sync")
+            return
 
         data = event.data.get("service_data", {})
         service = event.data.get("service")
@@ -171,10 +182,19 @@ async def async_setup_entry(hass, entry):
             debounce_unsub()
         debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_sync)
 
-    hass.bus.async_listen("call_service", call_service_listener)
+    unsub_listener = hass.bus.async_listen("call_service", call_service_listener)
+
+    # Store cleanup references
+    hass.data[DOMAIN]["unsub_listener"] = unsub_listener
+    hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
+    hass.data[DOMAIN]["sync_in_progress"] = False  # Flag to prevent listener during sync
 
     async def handle_refresh(call):
         _LOGGER.debug("ICA refresh triggered via service")
+
+        # Set sync flag to prevent listener from tracking our own operations
+        hass.data[DOMAIN]["sync_in_progress"] = True
+
         try:
             remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked"))
             keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
@@ -292,6 +312,9 @@ async def async_setup_entry(hass, entry):
 
         except Exception as e:
             _LOGGER.error("Fel vid refresh: %s", e)
+        finally:
+            # Always reset sync flag
+            hass.data[DOMAIN]["sync_in_progress"] = False
 
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
 
@@ -335,6 +358,37 @@ async def async_setup_entry(hass, entry):
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
 
     return True
+
+async def async_unload_entry(hass, entry):
+    """Unload a config entry."""
+    _LOGGER.debug("Unloading ICA Shopping integration")
+
+    # Cancel debounce timer if active
+    if "debounce_unsub_getter" in hass.data.get(DOMAIN, {}):
+        debounce_unsub = hass.data[DOMAIN]["debounce_unsub_getter"]()
+        if debounce_unsub:
+            debounce_unsub()
+
+    # Unsubscribe from event listener
+    if "unsub_listener" in hass.data.get(DOMAIN, {}):
+        hass.data[DOMAIN]["unsub_listener"]()
+
+    # Unload sensors
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+
+    # Remove service
+    if hass.services.has_service(DOMAIN, "refresh"):
+        hass.services.async_remove(DOMAIN, "refresh")
+
+    # Clean up stored data
+    if DOMAIN in hass.data:
+        hass.data[DOMAIN].pop("unsub_listener", None)
+        hass.data[DOMAIN].pop("debounce_unsub_getter", None)
+        hass.data[DOMAIN].pop("recent_keep_adds", None)
+        hass.data[DOMAIN].pop("recent_keep_removes", None)
+        hass.data[DOMAIN].pop("sync_in_progress", None)
+
+    return unload_ok
 
 
 async def _options_update_listener(hass, entry):
