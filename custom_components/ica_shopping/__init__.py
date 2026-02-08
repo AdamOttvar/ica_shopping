@@ -176,7 +176,7 @@ async def async_setup_entry(hass, entry):
     async def handle_refresh(call):
         _LOGGER.debug("ICA refresh triggered via service")
         try:
-            remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
+            remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked"))
             keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
             list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
 
