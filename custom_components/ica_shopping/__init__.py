@@ -47,10 +47,12 @@ async def async_setup_entry(hass, entry):
 
     session_id = entry.options.get("session_id", entry.data["session_id"])
     list_id = entry.options.get("ica_list_id", entry.data["ica_list_id"])
+    remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
 
     api = ICAApi(hass, session_id=session_id)
     hass.data.setdefault(DOMAIN, {})[DATA_ICA] = api
     hass.data[DOMAIN]["current_list_id"] = list_id
+    hass.data[DOMAIN]["remove_striked"] = remove_striked
 
     keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
     if not keep_entity:
@@ -174,7 +176,7 @@ async def async_setup_entry(hass, entry):
     async def handle_refresh(call):
         _LOGGER.debug("ICA refresh triggered via service")
         try:
-            remove_striked = entry.options.get("remove_striked", True)
+            remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
             keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
             list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
 
@@ -347,6 +349,17 @@ async def _options_update_listener(hass, entry):
             prev_list_id,
             new_list_id,
         )
+    
+    prev_remove_striked = hass.data[DOMAIN].get("remove_striked")
+    new_remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
+    if prev_remove_striked != new_remove_striked:
+        _LOGGER.info(
+            "remove_striked ändrat från %s till %s.",
+            prev_remove_striked,
+            new_remove_striked,
+        )
+
 
     hass.data[DOMAIN]["current_list_id"] = new_list_id
+    hass.data[DOMAIN]["remove_striked"] = new_remove_striked
     await hass.config_entries.async_reload(entry.entry_id)
