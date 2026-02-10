@@ -63,8 +63,17 @@ class ShoppingListSensor(SensorEntity):
         attributes = {
             "list_name": data.get("name", "")
         }
-        for i, item in enumerate(items, start=1):
-            attributes[f"vara_{i}"] = item.get("text", "")
+        item_idx = 1
+        striked_idx = 1
+        for item in items:
+            if item.get("isStriked", False):
+                attribute_name = f"striked_item_{striked_idx}"
+                striked_idx += 1
+            else:
+                attribute_name = f"item_{item_idx}"
+                item_idx += 1
+
+            attributes[attribute_name] = item.get("text", "")
 
         self._attr_extra_state_attributes = attributes
 
