@@ -60,6 +60,8 @@ async def async_setup_entry(hass, entry):
         keep_entity = None
 
     debounce_unsub = None
+    add_item_debounce_unsub = None
+    add_item_queue = set()
 
     async def schedule_sync(_now=None):
         nonlocal debounce_unsub
@@ -111,6 +113,35 @@ async def async_setup_entry(hass, entry):
         finally:
             # Always reset sync flag
             hass.data[DOMAIN]["sync_in_progress"] = False
+
+    async def schedule_add_items(_now=None):
+        nonlocal add_item_debounce_unsub
+        add_item_debounce_unsub = None
+
+        list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
+        items_to_add = list(add_item_queue)
+        add_item_queue.clear()
+
+        _LOGGER.debug("Debounced add_items with %d items", len(items_to_add))
+
+        try:
+            any_added = False
+            for text in items_to_add:
+                try:
+                    success = await api.add_to_list(list_id_local, text)
+                    if success:
+                        _LOGGER.info("Lade till '%s' i ICA", text)
+                        any_added = True
+                    else:
+                        _LOGGER.error("Misslyckades lägga till '%s' i ICA-lista %s", text, list_id_local)
+                except Exception as e:
+                    _LOGGER.error("Fel vid tillägg av '%s': %s", text, e)
+
+            if any_added:
+                await _trigger_sensor_update(hass, list_id_local)
+
+        except Exception as e:
+            _LOGGER.error("Fel vid schedule_add_items: %s", e)
 
     def call_service_listener(event):
         nonlocal debounce_unsub
@@ -187,6 +218,7 @@ async def async_setup_entry(hass, entry):
     # Store cleanup references
     hass.data[DOMAIN]["unsub_listener"] = unsub_listener
     hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
+    hass.data[DOMAIN]["add_item_debounce_unsub_getter"] = lambda: add_item_debounce_unsub
     hass.data[DOMAIN]["sync_in_progress"] = False  # Flag to prevent listener during sync
 
     async def handle_refresh(call):
@@ -319,6 +351,8 @@ async def async_setup_entry(hass, entry):
     hass.services.async_register(DOMAIN, "refresh", handle_refresh)
 
     async def handle_add_item(call):
+        nonlocal add_item_debounce_unsub
+
         api_local = hass.data.get(DOMAIN, {}).get(DATA_ICA)
         if not api_local:
             _LOGGER.error("ICA API saknas i hass.data. add_item kan inte köras.")
@@ -338,19 +372,13 @@ async def async_setup_entry(hass, entry):
             _LOGGER.error("add_item saknar text.")
             return
 
-        _LOGGER.debug("add_item: list_id=%s text=%s", list_id_local, text)
+        _LOGGER.debug("add_item queued: list_id=%s text=%s", list_id_local, text)
+        add_item_queue.add(text)
 
-        try:
-            success = await api_local.add_to_list(list_id_local, text)
-            if not success:
-                _LOGGER.error("Misslyckades lägga till '%s' i ICA-lista %s", text, list_id_local)
-                return
-
-            _LOGGER.info("Lade till '%s' i ICA-lista %s", text, list_id_local)
-            await _trigger_sensor_update(hass, list_id_local)
-
-        except Exception as e:
-            _LOGGER.error("Fel vid add_item: %s", e)
+        # Reset debounce timer
+        if add_item_debounce_unsub:
+            add_item_debounce_unsub()
+        add_item_debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_add_items)
 
     hass.services.async_register(DOMAIN, "add_item", handle_add_item)
 
@@ -363,11 +391,16 @@ async def async_unload_entry(hass, entry):
     """Unload a config entry."""
     _LOGGER.debug("Unloading ICA Shopping integration")
 
-    # Cancel debounce timer if active
+    # Cancel debounce timers if active
     if "debounce_unsub_getter" in hass.data.get(DOMAIN, {}):
         debounce_unsub = hass.data[DOMAIN]["debounce_unsub_getter"]()
         if debounce_unsub:
             debounce_unsub()
+
+    if "add_item_debounce_unsub_getter" in hass.data.get(DOMAIN, {}):
+        add_item_debounce_unsub = hass.data[DOMAIN]["add_item_debounce_unsub_getter"]()
+        if add_item_debounce_unsub:
+            add_item_debounce_unsub()
 
     # Unsubscribe from event listener
     if "unsub_listener" in hass.data.get(DOMAIN, {}):
@@ -384,6 +417,7 @@ async def async_unload_entry(hass, entry):
     if DOMAIN in hass.data:
         hass.data[DOMAIN].pop("unsub_listener", None)
         hass.data[DOMAIN].pop("debounce_unsub_getter", None)
+        hass.data[DOMAIN].pop("add_item_debounce_unsub_getter", None)
         hass.data[DOMAIN].pop("recent_keep_adds", None)
         hass.data[DOMAIN].pop("recent_keep_removes", None)
         hass.data[DOMAIN].pop("sync_in_progress", None)
