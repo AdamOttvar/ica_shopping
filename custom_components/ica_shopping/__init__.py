@@ -255,8 +255,8 @@ async def async_setup_entry(hass, entry):
             for text in keep_completed:
                 row_id = ica_rows_dict.get(text)
                 if row_id:
-                    await api.remove_item(row_id)
-                    _LOGGER.info("Tog bort '%s' från ICA (baserat på Keep completed)", text)
+                    await api.strike_item(row_id)
+                    _LOGGER.info("Strök '%s' från ICA (baserat på Keep completed)", text)
 
             recent_adds = hass.data[DOMAIN].setdefault("recent_keep_adds", set())
             recent_removes = hass.data[DOMAIN].setdefault("recent_keep_removes", set())
