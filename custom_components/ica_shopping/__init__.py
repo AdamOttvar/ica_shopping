@@ -1,4 +1,5 @@
 import logging
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers import entity_registry
 
@@ -337,7 +338,7 @@ async def async_setup_entry(hass, entry):
         api_local = hass.data.get(DOMAIN, {}).get(DATA_ICA)
         if not api_local:
             _LOGGER.error("ICA API saknas i hass.data. add_item kan inte köras.")
-            return
+            raise HomeAssistantError("ICA API not available")
 
         list_id_local = call.data.get("list_id") or hass.data.get(DOMAIN, {}).get("current_list_id")
         text = call.data.get("text")
@@ -347,11 +348,11 @@ async def async_setup_entry(hass, entry):
 
         if not list_id_local:
             _LOGGER.error("add_item saknar list_id och inget current_list_id finns sparat.")
-            return
+            raise HomeAssistantError("No list ID provided and no default list ID configured")
 
         if not text:
             _LOGGER.error("add_item saknar text.")
-            return
+            raise HomeAssistantError("Item text cannot be empty")
 
         _LOGGER.debug("add_item: list_id=%s text=%s", list_id_local, text)
 
@@ -359,13 +360,16 @@ async def async_setup_entry(hass, entry):
             success = await api_local.add_to_list(list_id_local, text)
             if not success:
                 _LOGGER.error("Misslyckades lägga till '%s' i ICA-lista %s", text, list_id_local)
-                return
+                raise HomeAssistantError(f"Failed to add '{text}' to ICA list {list_id_local}")
 
             _LOGGER.info("Lade till '%s' i ICA-lista %s", text, list_id_local)
             await _trigger_sensor_update(hass, list_id_local)
 
+        except HomeAssistantError:
+            raise
         except Exception as e:
             _LOGGER.error("Fel vid add_item: %s", e)
+            raise HomeAssistantError(f"Error adding item: {str(e)}")
 
     hass.services.async_register(DOMAIN, "add_item", handle_add_item)
 
