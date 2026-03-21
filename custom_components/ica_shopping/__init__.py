@@ -208,6 +208,29 @@ async def async_setup_entry(hass, entry):
 
             rows = the_list.get("rows", [])
 
+            result = await hass.services.async_call(
+                "todo",
+                "get_items",
+                {"entity_id": keep_entity_local},
+                blocking=True,
+                return_response=True,
+            )
+            keep_items = result.get(keep_entity_local, {}).get("items", [])
+
+            # Mark striked ICA items as completed in Keep
+            for row in rows:
+                if row.get("isStriked"):
+                    item_text = row.get("text", "").strip()
+                    for keep_item in keep_items:
+                        if keep_item.get("summary", "").strip() == item_text and keep_item.get("status") != "completed":
+                            await hass.services.async_call(
+                                "todo",
+                                "update_item",
+                                {"entity_id": keep_entity_local, "item": item_text, "status": "completed"},
+                            )
+                            _LOGGER.info("Markerade '%s' som completed i Keep (pga striked i ICA)", item_text)
+                            break
+
             if remove_striked:
                 checked_rows = [r for r in rows if r.get("isStriked") is True and r.get("id")]
                 for r in checked_rows:
@@ -226,14 +249,6 @@ async def async_setup_entry(hass, entry):
                 for row in rows if isinstance(row, dict)
             }
 
-            result = await hass.services.async_call(
-                "todo",
-                "get_items",
-                {"entity_id": keep_entity_local},
-                blocking=True,
-                return_response=True,
-            )
-            keep_items = result.get(keep_entity_local, {}).get("items", [])
             keep_summaries = [i.get("summary", "").strip() for i in keep_items if isinstance(i, dict)]
             keep_lower = [x.lower() for x in keep_summaries]
 
@@ -255,8 +270,8 @@ async def async_setup_entry(hass, entry):
             for text in keep_completed:
                 row_id = ica_rows_dict.get(text)
                 if row_id:
-                    await api.remove_item(row_id)
-                    _LOGGER.info("Tog bort '%s' från ICA (baserat på Keep completed)", text)
+                    await api.strike_item(row_id)
+                    _LOGGER.info("Strök '%s' från ICA (baserat på Keep completed)", text)
 
             recent_adds = hass.data[DOMAIN].setdefault("recent_keep_adds", set())
             recent_removes = hass.data[DOMAIN].setdefault("recent_keep_removes", set())
