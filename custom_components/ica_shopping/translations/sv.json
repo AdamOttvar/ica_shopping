@@ -1,21 +1,90 @@
 {
   "config": {
     "step": {
+      "user": {
+        "title": "Logga in på ICA",
+        "description": "Logga in med samma personnummer och PIN-kod som i ICA-appen.",
+        "data": {
+          "personal_id": "Personnummer",
+          "pin_code": "ICA PIN-kod"
+        },
+        "data_description": {
+          "personal_id": "10 eller 12 siffror, utan bindestreck",
+          "pin_code": "4-6 siffror"
+        }
+      },
+      "list": {
+        "title": "Välj inköpslista",
+        "data": {
+          "ica_list_id": "Inköpslista",
+          "remove_striked": "Rensa avbockade varor vid uppdatering",
+          "scan_interval": "Uppdateringsintervall"
+        },
+        "data_description": {
+          "remove_striked": "Uppdatera-tjänsten tar bort varor som är avbockade i ICA",
+          "scan_interval": "Hur ofta listan hämtas från ICA"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Logga in på ICA igen",
+        "description": "Inloggningen för {account} slutade fungera, eller gjordes med det gamla session ID:t. Logga in med personnummer och ICA PIN-kod.",
+        "data": {
+          "personal_id": "Personnummer",
+          "pin_code": "ICA PIN-kod"
+        }
+      },
+      "reauth_list": {
+        "title": "Välj inköpslista",
+        "description": "Den valda inköpslistan finns inte i ditt ICA-konto. Välj vilken lista som ska användas.",
+        "data": {
+          "ica_list_id": "Inköpslista"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta till ICA",
+      "invalid_auth": "Felaktigt personnummer eller PIN-kod",
+      "no_lists": "ICA-kontot har inga inköpslistor. Skapa en i ICA-appen först.",
+      "unknown": "Oväntat fel"
+    },
+    "abort": {
+      "already_configured": "Inköpslistan är redan konfigurerad",
+      "reauth_successful": "Inloggningen lyckades"
+    }
+  },
+  "options": {
+    "step": {
       "init": {
-        "title": "ICA Shopping – Konfiguration",
-        "description": "{warning_text}"
+        "title": "ICA Shopping",
+        "data": {
+          "remove_striked": "Rensa avbockade varor vid uppdatering",
+          "scan_interval": "Uppdateringsintervall"
+        },
+        "data_description": {
+          "remove_striked": "Uppdatera-tjänsten tar bort varor som är avbockade i ICA",
+          "scan_interval": "Hur ofta listan hämtas från ICA"
+        }
       }
     }
   },
-  "issues": {
-    "invalid_session_id": {
-      "title": "Session ID är ogiltigt",
-      "description": "ICA-integrationen kan inte hämta data. Öppna integrationen och uppdatera session ID:t i konfigurationen.",
-      "severity": "error"
+  "services": {
+    "add_item": {
+      "name": "Lägg till vara",
+      "description": "Lägger till en vara i ICA-inköpslistan",
+      "fields": {
+        "text": {
+          "name": "Vara",
+          "description": "Text för varan, t.ex. 'kaffe'"
+        },
+        "list_id": {
+          "name": "List-ID",
+          "description": "ID för en annan inköpslista i kontot. Lämna tomt för att använda den valda listan."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Uppdatera",
+      "description": "Hämtar inköpslistan från ICA och rensar avbockade varor om det är aktiverat"
     }
-  },
-  "remove_striked_both": {
-    "name": "Rensa avbockade och klara varor",
-    "description": "Tar bort avbockade rader från ICA och completed-items från Keep"
   }
 }

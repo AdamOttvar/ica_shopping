@@ -1,15 +1,12 @@
 {
   "domain": "ica_shopping",
   "name": "ICA Shopping",
-  "version": "8.0.4",
-  "documentation": "https://github.com/mellamomax/ica_shopping",
-  "issue_tracker": "https://github.com/mellamomax/ica_shopping/issues",
-  "requirements": ["requests"],
+  "version": "9.0.0",
+  "documentation": "https://github.com/AdamOttvar/ica_shopping",
+  "issue_tracker": "https://github.com/AdamOttvar/ica_shopping/issues",
+  "requirements": [],
   "dependencies": [],
   "codeowners": ["@mellamomax", "@tommy-westin", "@AdamOttvar"],
   "iot_class": "cloud_polling",
-  "image": "local/icon.png",
-  "platforms": ["sensor"],
-  "config_flow": true,
-  "options_flow": true
+  "config_flow": true
 }

@@ -1,21 +1,90 @@
 {
   "config": {
     "step": {
+      "user": {
+        "title": "Log in to ICA",
+        "description": "Log in with the same personal ID number and PIN as in the ICA app.",
+        "data": {
+          "personal_id": "Personal ID number",
+          "pin_code": "ICA PIN code"
+        },
+        "data_description": {
+          "personal_id": "10 or 12 digits, no hyphen",
+          "pin_code": "4-6 digits"
+        }
+      },
+      "list": {
+        "title": "Choose shopping list",
+        "data": {
+          "ica_list_id": "Shopping list",
+          "remove_striked": "Remove checked items on refresh",
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "remove_striked": "The refresh action removes items that are checked in ICA",
+          "scan_interval": "How often to fetch the list from ICA"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in to ICA again",
+        "description": "The login for {account} stopped working, or was made with the old session ID. Log in with your personal ID number and ICA PIN code.",
+        "data": {
+          "personal_id": "Personal ID number",
+          "pin_code": "ICA PIN code"
+        }
+      },
+      "reauth_list": {
+        "title": "Choose shopping list",
+        "description": "The configured shopping list was not found in your ICA account. Choose the list to use.",
+        "data": {
+          "ica_list_id": "Shopping list"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to ICA",
+      "invalid_auth": "Invalid personal ID number or PIN",
+      "no_lists": "The ICA account has no shopping lists. Create one in the ICA app first.",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This shopping list is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
       "init": {
-        "title": "ICA Shopping Configuration",
-        "description": "{warning_text}"
+        "title": "ICA Shopping",
+        "data": {
+          "remove_striked": "Remove checked items on refresh",
+          "scan_interval": "Update interval"
+        },
+        "data_description": {
+          "remove_striked": "The refresh action removes items that are checked in ICA",
+          "scan_interval": "How often to fetch the list from ICA"
+        }
       }
     }
   },
-  "issues": {
-    "invalid_session_id": {
-      "title": "Session ID is invalid",
-      "description": "The ICA integration cannot fetch data. Open the integration and update the session ID in the configuration.",
-      "severity": "error"
+  "services": {
+    "add_item": {
+      "name": "Add item",
+      "description": "Adds an item to the ICA shopping list",
+      "fields": {
+        "text": {
+          "name": "Item",
+          "description": "Item text to add, e.g. 'kaffe'"
+        },
+        "list_id": {
+          "name": "List ID",
+          "description": "ID of another shopping list in the account. Leave empty to use the configured list."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Fetches the shopping list from ICA, and removes checked items if enabled"
     }
-  },
-  "remove_striked_both": {
-    "name": "Remove checked and completed items",
-    "description": "Removes checked rows from ICA and completed items from Keep"
   }
 }
