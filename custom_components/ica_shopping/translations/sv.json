@@ -86,5 +86,12 @@
       "name": "Uppdatera",
       "description": "Hämtar inköpslistan från ICA och rensar avbockade varor om det är aktiverat"
     }
+  },
+  "entity": {
+    "todo": {
+      "shopping_list": {
+        "name": "Inköpslista"
+      }
+    }
   }
 }
