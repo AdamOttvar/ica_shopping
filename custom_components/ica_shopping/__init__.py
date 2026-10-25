@@ -1,434 +1,113 @@
 import logging
-from homeassistant.helpers.event import async_call_later
-from homeassistant.helpers import entity_registry
 
-from .const import DOMAIN, DATA_ICA
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+
+from .const import (
+    CONF_AUTH_STATE,
+    CONF_ICA_ID,
+    CONF_ICA_PIN,
+    CONF_REMOVE_STRIKED,
+    DOMAIN,
+)
+from .coordinator import IcaShoppingCoordinator
 from .ica_api import ICAApi
 
 _LOGGER = logging.getLogger(__name__)
 
+PLATFORMS = ["sensor"]
 
-async def _trigger_sensor_update(hass, list_id):
-    registry = entity_registry.async_get(hass)
-    target_unique_id = f"shoppinglist_{list_id}"
-    sensor_entity = None
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-    for entity in registry.entities.values():
-        if entity.unique_id == target_unique_id:
-            sensor_entity = entity.entity_id
-            break
+ADD_ITEM_SCHEMA = vol.Schema(
+    {
+        vol.Required("text"): cv.string,
+        vol.Optional("list_id"): cv.string,
+    }
+)
 
-    if not sensor_entity:
-        _LOGGER.debug("Kunde inte hitta sensor med unique_id %s", target_unique_id)
-        return
+# Settings of earlier versions, which logged in with a session cookie and
+# could sync with a Google Keep to-do list
+LEGACY_KEYS = ("session_id", "todo_entity_id")
 
-    _LOGGER.debug("Triggar update för %s", sensor_entity)
-    await hass.services.async_call(
-        "homeassistant",
-        "update_entity",
-        {"entity_id": sensor_entity},
-        blocking=True,
-    )
 
+def _loaded_coordinators(hass: HomeAssistant) -> list[IcaShoppingCoordinator]:
+    return [
+        entry.runtime_data
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.state is ConfigEntryState.LOADED
+    ]
 
-STORAGE_VERSION = 1
-STORAGE_KEY = "ica_keep_synced_list"
-MAX_ICA_ITEMS = 250
-MAX_KEEP_ITEMS = 100
-DEBOUNCE_SECONDS = 1
 
-
-async def async_setup(hass, config):
-    return True
-
-
-async def async_setup_entry(hass, entry):
-    _LOGGER.debug("ICA Shopping initieras via UI config entry")
-
-    session_id = entry.options.get("session_id", entry.data["session_id"])
-    list_id = entry.options.get("ica_list_id", entry.data["ica_list_id"])
-    remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
-
-    api = ICAApi(hass, session_id=session_id)
-    hass.data.setdefault(DOMAIN, {})[DATA_ICA] = api
-    hass.data[DOMAIN]["current_list_id"] = list_id
-    hass.data[DOMAIN]["remove_striked"] = remove_striked
-
-    keep_entity = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
-    if not keep_entity:
-        _LOGGER.warning("Ingen todo-entity vald. Keep-synk inaktiveras, men ICA-sensor och services fungerar.")
-        keep_entity = None
-
-    debounce_unsub = None
-
-    async def schedule_sync(_now=None):
-        nonlocal debounce_unsub
-        debounce_unsub = None
-
-        list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-        keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
-
-        # Set sync flag to prevent listener from tracking our own operations
-        hass.data[DOMAIN]["sync_in_progress"] = True
-
-        _LOGGER.debug("Debounced Keep -> ICA sync")
-        try:
-            result = await hass.services.async_call(
-                "todo",
-                "get_items",
-                {"entity_id": keep_entity_local},
-                blocking=True,
-                return_response=True,
-            )
-
-            items = result.get(keep_entity_local, {}).get("items", [])
-            summaries = [i.get("summary", "").strip() for i in items if isinstance(i, dict)]
-            if len(summaries) > MAX_KEEP_ITEMS:
-                summaries = summaries[:MAX_KEEP_ITEMS]
-
-            lists = await api.fetch_lists()
-            rows = next((l.get("rows", []) for l in lists if l.get("id") == list_id_local), [])
-            if len(rows) >= MAX_ICA_ITEMS:
-                _LOGGER.error("ICA-listan full (%s). Inga varor tillagda.", len(rows))
-                return
-
-            existing = [r.get("text", "").strip().lower() for r in rows if isinstance(r, dict)]
-            space = MAX_ICA_ITEMS - len(rows)
-            to_add = [s for s in summaries if s.lower() not in existing][:space]
-
-            any_added = False
-            for text in to_add:
-                success = await api.add_to_list(list_id_local, text)
-                if success:
-                    _LOGGER.info("Lade till '%s' i ICA", text)
-                    any_added = True
-
-            if any_added:
-                await _trigger_sensor_update(hass, list_id_local)
-
-        except Exception as e:
-            _LOGGER.error("Fel vid sync_keep_to_ica: %s", e)
-        finally:
-            # Always reset sync flag
-            hass.data[DOMAIN]["sync_in_progress"] = False
-
-    def call_service_listener(event):
-        nonlocal debounce_unsub
-
-        # Skip if sync is in progress (to avoid tracking our own sync operations)
-        if hass.data[DOMAIN].get("sync_in_progress", False):
-            _LOGGER.debug("Ignorerar call_service under pågående sync")
-            return
-
-        data = event.data.get("service_data", {})
-        service = event.data.get("service")
-
-        if service == "update_item":
-            status = data.get("status")
-            text = data.get("rename")
-            if status == "completed" and text:
-                item = text.strip().lower()
-                hass.data[DOMAIN].setdefault("recent_keep_removes", set()).add(item)
-                _LOGGER.debug("Avlyssnad remove via update_item: %s", item)
-
-                async def remove_from_ica_direct():
-                    try:
-                        list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-                        lists = await api.fetch_lists()
-                        rows = next((l.get("rows", []) for l in lists if l.get("id") == list_id_local), [])
-                        ica_rows_dict = {
-                            row.get("text", "").strip().lower(): row.get("id")
-                            for row in rows if isinstance(row, dict)
-                        }
-                        row_id = ica_rows_dict.get(item)
-                        if row_id:
-                            await api.remove_item(row_id)
-                            _LOGGER.info("Direkt borttagning av '%s' från ICA (pga completed i Keep)", item)
-                    except Exception as e:
-                        _LOGGER.error("Fel vid direkt ICA-radering: %s", e)
-
-                hass.async_create_task(remove_from_ica_direct())
-
-                if debounce_unsub:
-                    debounce_unsub()
-                debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_sync)
-
-        entity_ids = data.get("entity_id", [])
-        keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
-
-        item = data.get("item")
-        if isinstance(item, str):
-            item = item.strip().lower()
-        elif isinstance(item, list) and item:
-            item = item[0].strip().lower()
-        else:
-            item = None
-
-        if isinstance(entity_ids, str):
-            entity_ids = [entity_ids]
-
-        if keep_entity_local not in entity_ids or not item:
-            return
-
-        if service == "add_item":
-            hass.data[DOMAIN].setdefault("recent_keep_adds", set()).add(item)
-            _LOGGER.debug("Noterat add_item i Keep: %s", item)
-
-        elif service == "remove_item":
-            hass.data[DOMAIN].setdefault("recent_keep_removes", set()).add(item)
-            _LOGGER.debug("Noterat remove_item i Keep: %s", item)
-
-        if debounce_unsub:
-            debounce_unsub()
-        debounce_unsub = async_call_later(hass, DEBOUNCE_SECONDS, schedule_sync)
-
-    unsub_listener = hass.bus.async_listen("call_service", call_service_listener)
-
-    # Store cleanup references
-    hass.data[DOMAIN]["unsub_listener"] = unsub_listener
-    hass.data[DOMAIN]["debounce_unsub_getter"] = lambda: debounce_unsub
-    hass.data[DOMAIN]["sync_in_progress"] = False  # Flag to prevent listener during sync
-
-    async def handle_refresh(call):
-        _LOGGER.debug("ICA refresh triggered via service")
-
-        # Set sync flag to prevent listener from tracking our own operations
-        hass.data[DOMAIN]["sync_in_progress"] = True
-
-        try:
-            remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked"))
-            keep_entity_local = entry.options.get("todo_entity_id", entry.data.get("todo_entity_id"))
-            list_id_local = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-
-            lists = await api.fetch_lists()
-            the_list = next((l for l in lists if l.get("id") == list_id_local), None)
-            if not the_list:
-                _LOGGER.warning("Kunde inte hitta ICA-lista %s", list_id_local)
-                return
-
-            rows = the_list.get("rows", [])
-
-            result = await hass.services.async_call(
-                "todo",
-                "get_items",
-                {"entity_id": keep_entity_local},
-                blocking=True,
-                return_response=True,
-            )
-            keep_items = result.get(keep_entity_local, {}).get("items", [])
-
-            # Mark striked ICA items as completed in Keep
-            for row in rows:
-                if row.get("isStriked"):
-                    item_text = row.get("text", "").strip()
-                    for keep_item in keep_items:
-                        if keep_item.get("summary", "").strip() == item_text and keep_item.get("status") != "completed":
-                            await hass.services.async_call(
-                                "todo",
-                                "update_item",
-                                {"entity_id": keep_entity_local, "item": item_text, "status": "completed"},
-                            )
-                            _LOGGER.info("Markerade '%s' som completed i Keep (pga striked i ICA)", item_text)
-                            break
-
-            if remove_striked:
-                checked_rows = [r for r in rows if r.get("isStriked") is True and r.get("id")]
-                for r in checked_rows:
-                    await api.remove_item(r["id"])
-                    _LOGGER.info("Rensade avbockad vara '%s' från ICA", r.get("text", ""))
-                rows = [r for r in rows if r.get("id") not in [cr["id"] for cr in checked_rows]]
-
-            if len(rows) >= MAX_ICA_ITEMS:
-                _LOGGER.error("ICA-listan är full (%s varor). Refresh stoppad.", len(rows))
-                return
-
-            ica_items = [row.get("text", "").strip() for row in rows if isinstance(row, dict)]
-            ica_items_lower = [x.lower() for x in ica_items]
-            ica_rows_dict = {
-                row.get("text", "").strip().lower(): row.get("id")
-                for row in rows if isinstance(row, dict)
-            }
-
-            keep_summaries = [i.get("summary", "").strip() for i in keep_items if isinstance(i, dict)]
-            keep_lower = [x.lower() for x in keep_summaries]
-
-            keep_completed = [
-                i.get("summary", "").strip().lower()
-                for i in keep_items
-                if i.get("status") == "completed"
-            ]
-
-            if remove_striked:
-                for text in keep_completed:
-                    await hass.services.async_call(
-                        "todo",
-                        "remove_item",
-                        {"entity_id": keep_entity_local, "item": text},
-                    )
-                    _LOGGER.info("Tog bort '%s' från Keep (pga status completed + remove_striked)", text)
-
-            for text in keep_completed:
-                row_id = ica_rows_dict.get(text)
-                if row_id:
-                    await api.strike_item(row_id)
-                    _LOGGER.info("Strök '%s' från ICA (baserat på Keep completed)", text)
-
-            recent_adds = hass.data[DOMAIN].setdefault("recent_keep_adds", set())
-            recent_removes = hass.data[DOMAIN].setdefault("recent_keep_removes", set())
-
-            to_add = []
-            for item_text in ica_items:
-                key = item_text.lower()
-                if key not in keep_lower and key not in recent_removes:
-                    _LOGGER.debug("Planerar att lägga till i Keep: %s", item_text)
-                    to_add.append(item_text)
-                else:
-                    _LOGGER.debug("Hoppar över '%s' (recent_removes eller redan i Keep)", item_text)
-
-            max_add = MAX_ICA_ITEMS - len(keep_items)
-            to_add = to_add[:max_add]
-
-            for item_text in to_add:
-                await hass.services.async_call(
-                    "todo",
-                    "add_item",
-                    {"entity_id": keep_entity_local, "item": item_text},
-                )
-                _LOGGER.info("Lagt till '%s' i Keep", item_text)
-
-            to_remove_from_keep = [
-                i.get("summary") for i in keep_items
-                if i.get("summary", "").strip().lower() not in ica_items_lower
-            ]
-
-            for summary in to_remove_from_keep:
-                if summary:
-                    await hass.services.async_call(
-                        "todo",
-                        "remove_item",
-                        {"entity_id": keep_entity_local, "item": summary},
-                    )
-                    _LOGGER.info("Tagit bort '%s' från Keep", summary)
-
-            to_remove_from_ica = [item_text for item_text in recent_removes if item_text in ica_rows_dict]
-
-            for text in to_remove_from_ica:
-                row_id = ica_rows_dict.get(text)
-                if row_id:
-                    await api.remove_item(row_id)
-                    _LOGGER.info("Tog bort '%s' från ICA (baserat på Keep-radering)", text)
-
-            await _trigger_sensor_update(hass, list_id_local)
-
-            if "recent_keep_adds" in hass.data[DOMAIN]:
-                hass.data[DOMAIN]["recent_keep_adds"].clear()
-            if "recent_keep_removes" in hass.data[DOMAIN]:
-                hass.data[DOMAIN]["recent_keep_removes"].clear()
-
-        except Exception as e:
-            _LOGGER.error("Fel vid refresh: %s", e)
-        finally:
-            # Always reset sync flag
-            hass.data[DOMAIN]["sync_in_progress"] = False
-
-    hass.services.async_register(DOMAIN, "refresh", handle_refresh)
-
-    async def handle_add_item(call):
-        api_local = hass.data.get(DOMAIN, {}).get(DATA_ICA)
-        if not api_local:
-            _LOGGER.error("ICA API saknas i hass.data. add_item kan inte köras.")
-            return
-
-        list_id_local = call.data.get("list_id") or hass.data.get(DOMAIN, {}).get("current_list_id")
-        text = call.data.get("text")
-
-        if isinstance(text, str):
-            text = text.strip()
-
-        if not list_id_local:
-            _LOGGER.error("add_item saknar list_id och inget current_list_id finns sparat.")
-            return
-
+async def async_setup(hass: HomeAssistant, config) -> bool:
+    async def handle_add_item(call: ServiceCall) -> None:
+        text = call.data["text"].strip()
         if not text:
-            _LOGGER.error("add_item saknar text.")
-            return
+            raise ServiceValidationError("add_item needs a text")
 
-        _LOGGER.debug("add_item: list_id=%s text=%s", list_id_local, text)
+        coordinators = _loaded_coordinators(hass)
+        if not coordinators:
+            raise ServiceValidationError("No ICA shopping list is loaded")
 
-        try:
-            success = await api_local.add_to_list(list_id_local, text)
-            if not success:
-                _LOGGER.error("Misslyckades lägga till '%s' i ICA-lista %s", text, list_id_local)
-                return
+        list_id = call.data.get("list_id")
+        coordinator = next(
+            (c for c in coordinators if list_id and c.list_id.lower() == list_id.lower()),
+            coordinators[0],
+        )
+        await coordinator.async_add_item(text, list_id)
 
-            _LOGGER.info("Lade till '%s' i ICA-lista %s", text, list_id_local)
-            await _trigger_sensor_update(hass, list_id_local)
+    async def handle_refresh(call: ServiceCall) -> None:
+        for coordinator in _loaded_coordinators(hass):
+            await coordinator.async_refresh_list()
 
-        except Exception as e:
-            _LOGGER.error("Fel vid add_item: %s", e)
-
-    hass.services.async_register(DOMAIN, "add_item", handle_add_item)
-
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
-    entry.async_on_unload(entry.add_update_listener(_options_update_listener))
-
+    hass.services.async_register(DOMAIN, "add_item", handle_add_item, schema=ADD_ITEM_SCHEMA)
+    hass.services.async_register(DOMAIN, "refresh", handle_refresh)
     return True
 
-async def async_unload_entry(hass, entry):
-    """Unload a config entry."""
-    _LOGGER.debug("Unloading ICA Shopping integration")
 
-    # Cancel debounce timer if active
-    if "debounce_unsub_getter" in hass.data.get(DOMAIN, {}):
-        debounce_unsub = hass.data[DOMAIN]["debounce_unsub_getter"]()
-        if debounce_unsub:
-            debounce_unsub()
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if not entry.data.get(CONF_ICA_ID) or not entry.data.get(CONF_ICA_PIN):
+        # Set up with the old session cookie login, ask for personal ID and PIN
+        raise ConfigEntryAuthFailed("ICA now needs your personal ID number and PIN")
 
-    # Unsubscribe from event listener
-    if "unsub_listener" in hass.data.get(DOMAIN, {}):
-        hass.data[DOMAIN]["unsub_listener"]()
+    api = ICAApi(
+        entry.data[CONF_ICA_ID], entry.data[CONF_ICA_PIN], entry.data.get(CONF_AUTH_STATE)
+    )
+    coordinator = IcaShoppingCoordinator(hass, entry, api)
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
-    # Unload sensors
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
-
-    # Remove service
-    if hass.services.has_service(DOMAIN, "refresh"):
-        hass.services.async_remove(DOMAIN, "refresh")
-
-    # Clean up stored data
-    if DOMAIN in hass.data:
-        hass.data[DOMAIN].pop("unsub_listener", None)
-        hass.data[DOMAIN].pop("debounce_unsub_getter", None)
-        hass.data[DOMAIN].pop("recent_keep_adds", None)
-        hass.data[DOMAIN].pop("recent_keep_removes", None)
-        hass.data[DOMAIN].pop("sync_in_progress", None)
-
-    return unload_ok
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_options_update_listener))
+    return True
 
 
-async def _options_update_listener(hass, entry):
-    _LOGGER.debug("Optioner har ändrats, laddar om entry")
-
-    prev_list_id = hass.data[DOMAIN].get("current_list_id")
-    new_list_id = entry.options.get("ica_list_id", entry.data.get("ica_list_id"))
-
-    if prev_list_id and prev_list_id != new_list_id:
-        _LOGGER.warning(
-            "List ID changed from %s to %s. Detta kan trigga sync av tidigare Keep-items till ny ICA-lista.",
-            prev_list_id,
-            new_list_id,
-        )
-    
-    prev_remove_striked = hass.data[DOMAIN].get("remove_striked")
-    new_remove_striked = entry.options.get("remove_striked", entry.data.get("remove_striked", True))
-    if prev_remove_striked != new_remove_striked:
-        _LOGGER.info(
-            "remove_striked ändrat från %s till %s.",
-            prev_remove_striked,
-            new_remove_striked,
-        )
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
-    hass.data[DOMAIN]["current_list_id"] = new_list_id
-    hass.data[DOMAIN]["remove_striked"] = new_remove_striked
+async def _options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if entry.version > 1:
+        # Downgraded from a future version
+        return False
+
+    if entry.minor_version < 2:
+        # Drop the session cookie and Keep settings, move remove_striked to options
+        data = {k: v for k, v in entry.data.items() if k not in LEGACY_KEYS}
+        options = {k: v for k, v in entry.options.items() if k not in LEGACY_KEYS}
+        if CONF_REMOVE_STRIKED in data:
+            options.setdefault(CONF_REMOVE_STRIKED, data.pop(CONF_REMOVE_STRIKED))
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, version=1, minor_version=2
+        )
+        _LOGGER.info("Migrated ICA Shopping entry, log in again with personal ID and PIN")
+
+    return True

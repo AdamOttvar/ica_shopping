@@ -1,199 +1,90 @@
+"""Client for the ICA shopping list API.
+
+All methods are blocking and are run in the executor by the coordinator.
+"""
+
+from __future__ import annotations
+
+import datetime
 import logging
+import uuid
+from typing import Any
 
-import aiofiles
-import aiohttp
-import yaml
+import requests
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import issue_registry as ir
-
-from .const import API_ADD_ROW, API_LIST_ALL, API_REMOVE_ROW, DOMAIN
+from .authenticator import IcaAuthenticator
+from .const import API_LIST, API_LIST_SYNC, API_LISTS
 
 _LOGGER = logging.getLogger(__name__)
 
+# Seconds to wait for the ICA API before giving up (connect, read)
+REQUEST_TIMEOUT = (10, 30)
+
+
+def utc_timestamp() -> str:
+    """ICA style UTC timestamp, e.g. '2024-03-10T12:00:00Z'."""
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class ICAApi:
-    def __init__(self, hass, session_id):
-        self.hass = hass
-        self.session_id = session_id
+    def __init__(self, personal_id: str, pin: str, auth_state: dict[str, Any] | None):
+        self._session = requests.Session()
+        self._auth = IcaAuthenticator(personal_id, pin, auth_state, self._session)
 
-    async def _get_token_from_session_id(self):
+    @property
+    def auth_state(self) -> dict[str, Any]:
+        return self._auth.auth_state
+
+    def token_needs_refresh(self) -> bool:
+        return self._auth.token_needs_refresh()
+
+    def ensure_login(self, refresh: bool = False) -> dict[str, Any]:
+        return self._auth.ensure_login(refresh=refresh)
+
+    def _headers(self, with_content: bool = False) -> dict[str, str]:
         headers = {
-            "Cookie": f"thSessionId={self.session_id}",
-            "Accept": "application/json"
-        }
-        url = "https://www.ica.se/api/user/information"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        _LOGGER.error("Misslyckades att hämta accessToken (%s)", resp.status)
-
-                        ir.async_create_issue(
-                            self.hass,
-                            DOMAIN,
-                            "invalid_session_id",
-                            is_fixable=True,
-                            severity=ir.IssueSeverity.ERROR,
-                            translation_key="invalid_session_id"
-                        )   
-
-                        return None
-
-                    data = await resp.json()
-                    token = data.get("accessToken")
-
-
-                    # Ta bort eventuell aktiv issue om sessionen funkar igen
-
-                    ir.async_delete_issue(self.hass, DOMAIN, "invalid_session_id")
-
-                    return token
-        except Exception as e:
-            _LOGGER.error("Fel vid hämtning av accessToken: %s", e)
-            return None
-
-
-    async def fetch_lists(self):
-        token = await self._get_token_from_session_id()
-        if not token:
-            _LOGGER.error("Avbryter fetch_lists - token saknas")
-            return []
-        headers = {
-            "Authorization": f"Bearer {token}",
+            "Authorization": f"Bearer {self._auth.access_token}",
             "Accept": "application/json",
-            "Cookie": f"thSessionId={self.session_id}"
         }
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(API_LIST_ALL, headers=headers) as resp:
-                    _LOGGER.debug("ICA API status: %s", resp.status)
-                    if resp.status != 200:
-                        _LOGGER.error("ICA API error: %s", resp.status)
-                        return []
+        if with_content:
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        return headers
 
-                    result = await resp.json()
-                    _LOGGER.debug("ICA API raw response: %s", result)
+    def _request(self, method: str, url: str, json_data: Any | None = None):
+        response = self._session.request(
+            method,
+            url,
+            headers=self._headers(with_content=json_data is not None),
+            json=json_data,
+            timeout=REQUEST_TIMEOUT,
+        )
+        _LOGGER.debug("HTTP [%s] %s -> %s", method, url, response.status_code)
+        if not response.ok:
+            _LOGGER.debug("Response body: %s", response.text[:500])
+        response.raise_for_status()
+        return response.json() if response.content else None
 
-                    # Returnera rätt beroende på format
-                    if isinstance(result, dict) and "items" in result:
-                        return result["items"]
-                    elif isinstance(result, list):
-                        return result
-                    else:
-                        _LOGGER.error("Oväntat format på ICA-response: %s", type(result))
-                        return []
-        except Exception as e:
-            _LOGGER.error("Fel vid hämtning av ICA-listor: %s", e)
-            return []
+    def get_shopping_lists(self) -> list[dict[str, Any]]:
+        data = self._request("GET", API_LISTS) or {}
+        return data.get("shoppingLists") or []
 
-    async def get_list_name(self, list_id: str) -> str:
-        lists = await self.fetch_lists()
-        for lst in lists:
-            if lst.get("id") == list_id:
-                return lst.get("name", f"Lista {list_id}")
-        return f"Lista {list_id}"  # fallback
+    def get_shopping_list(self, list_id: str) -> dict[str, Any]:
+        return self._request("GET", API_LIST.format(list_id=list_id))
 
-    async def get_list_by_id(self, list_id: str):
-        lists = await self.fetch_lists()
-        for lst in lists:
-            if lst.get("id") == list_id:
-                return lst
-        return None
+    def sync_shopping_list(self, list_id: str, changes: dict[str, Any]) -> dict | None:
+        """Push created/changed/deleted rows, returns the updated list."""
+        return self._request("POST", API_LIST_SYNC.format(list_id=list_id), changes)
 
-
-    async def add_item(self, list_id: str, item: str):
-        token = await self._get_token_from_session_id()
-        if not token:
-            return False
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
+    def add_item(self, list_id: str, text: str) -> dict | None:
+        row = {
+            "offlineId": str(uuid.uuid4()),
+            "productName": text,
+            "isStrikedOver": False,
+            "sourceId": -1,
+            "latestChange": utc_timestamp(),
         }
-        data = {"text": item}
-        url = API_ADD_ROW.format(list_id=list_id)
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=data) as resp:
-                    _LOGGER.debug("Lägg till '%s' till ICA (%s): %s", item, list_id, resp.status)
-                    return resp.status == 200
-        except Exception as e:
-            _LOGGER.error("Error adding item to ICA: %s", e)
-            return False
+        return self.sync_shopping_list(list_id, {"createdRows": [row]})
 
-    async def remove_item(self, row_id: str) -> bool:
-        token = await self._get_token_from_session_id()
-        if not token:
-            _LOGGER.error("Kan inte radera - token saknas")
-            return False
-        url = f"https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/row/{row_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=UTF-8",
-            "Accept": "*/*"
-        }
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(url, headers=headers) as resp:
-                    if resp.status in (200, 204):
-                        _LOGGER.info("Tog bort rad %s från ICA", row_id)
-                        return True
-                    else:
-                        _LOGGER.warning("Misslyckades ta bort rad %s – status %s", row_id, resp.status)
-                        return False
-        except Exception as e:
-            _LOGGER.error("Fel vid borttagning av ICA-rad: %s", e)
-            return False
-
-    async def strike_item(self, row_id: str) -> bool:
-        token = await self._get_token_from_session_id()
-        if not token:
-            _LOGGER.error("Kan inte radera - token saknas")
-            return False
-        url = f"https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/row/{row_id}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=UTF-8",
-            "Accept": "*/*"
-        }
-        payload = {"isStriked": True}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.put(url, headers=headers, json=payload) as resp:
-                    if resp.status in (200, 204):
-                        _LOGGER.info("Strök rad %s från ICA", row_id)
-                        return True
-                    else:
-                        _LOGGER.warning("Misslyckades stryka rad %s - status %s", row_id, resp.status)
-                        return False
-        except Exception as e:
-            _LOGGER.error("Fel vid strykning av ICA-rad: %s", e)
-            return False
-            
-    async def add_to_list(self, list_id: str, text: str):
-        token = await self._get_token_from_session_id()
-        if not token:
-            _LOGGER.error("Saknar token - kan inte lägga till i ICA")
-            return False
-        url = f"https://apimgw-pub.ica.se/sverige/digx/shopping-list/v1/api/list/{list_id}/row"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {
-          "text": text}
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    _LOGGER.debug("Försöker lägga till '%s' i ICA (%s)", text, resp.status)
-                    if resp.status == 200:
-                        _LOGGER.info("Lade till '%s' i ICA-listan", text)
-                        return True
-                    else:
-                        body = await resp.text()
-                        _LOGGER.warning("Kunde inte lägga till i ICA (%s): %s", resp.status, body)
-                        return False
-        except Exception as e:
-            _LOGGER.error("Fel vid add_to_list('%s'): %s", text, e)
-            return False
+    def remove_items(self, list_id: str, row_ids: list[str]) -> dict | None:
+        """Delete rows by their offlineId."""
+        return self.sync_shopping_list(list_id, {"deletedRows": row_ids})
