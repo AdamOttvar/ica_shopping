@@ -18,11 +18,13 @@
         "data": {
           "ica_list_id": "Shopping list",
           "remove_striked": "Remove checked items on refresh",
-          "scan_interval": "Update interval"
+          "scan_interval": "Update interval",
+          "todo_entity_id": "Sync with to-do list"
         },
         "data_description": {
           "remove_striked": "The refresh action removes items that are checked in ICA",
-          "scan_interval": "How often to fetch the list from ICA"
+          "scan_interval": "How often to fetch the list from ICA",
+          "todo_entity_id": "The Home Assistant to-do list to keep in sync with the ICA list, e.g. todo.shopping_list. Leave empty to not sync."
         }
       },
       "reauth_confirm": {
@@ -58,11 +60,13 @@
         "title": "ICA Shopping",
         "data": {
           "remove_striked": "Remove checked items on refresh",
-          "scan_interval": "Update interval"
+          "scan_interval": "Update interval",
+          "todo_entity_id": "Sync with to-do list"
         },
         "data_description": {
           "remove_striked": "The refresh action removes items that are checked in ICA",
-          "scan_interval": "How often to fetch the list from ICA"
+          "scan_interval": "How often to fetch the list from ICA",
+          "todo_entity_id": "The Home Assistant to-do list to keep in sync with the ICA list, e.g. todo.shopping_list. Leave empty to not sync."
         }
       }
     }
@@ -85,13 +89,6 @@
     "refresh": {
       "name": "Refresh",
       "description": "Fetches the shopping list from ICA, and removes checked items if enabled"
-    }
-  },
-  "entity": {
-    "todo": {
-      "shopping_list": {
-        "name": "Shopping list"
-      }
     }
   }
 }

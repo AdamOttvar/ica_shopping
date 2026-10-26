@@ -12,14 +12,16 @@ from .const import (
     CONF_ICA_ID,
     CONF_ICA_PIN,
     CONF_REMOVE_STRIKED,
+    CONF_TODO_ENTITY_ID,
     DOMAIN,
 )
-from .coordinator import IcaShoppingCoordinator
+from .coordinator import IcaShoppingCoordinator, entry_option
 from .ica_api import ICAApi
+from .sync import TodoSync
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor", "todo"]
+PLATFORMS = ["sensor"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -30,9 +32,8 @@ ADD_ITEM_SCHEMA = vol.Schema(
     }
 )
 
-# Settings of earlier versions, which logged in with a session cookie and
-# could sync with a Google Keep to-do list
-LEGACY_KEYS = ("session_id", "todo_entity_id")
+# Settings of earlier versions, which logged in with a session cookie
+LEGACY_KEYS = ("session_id",)
 
 
 def _loaded_coordinators(hass: HomeAssistant) -> list[IcaShoppingCoordinator]:
@@ -82,12 +83,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if todo_entity_id := entry_option(entry, CONF_TODO_ENTITY_ID):
+        todo_sync = TodoSync(hass, entry, coordinator, todo_entity_id)
+        await todo_sync.async_start()
+        entry.async_on_unload(todo_sync.async_stop)
+
     entry.async_on_unload(entry.add_update_listener(_options_update_listener))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await TodoSync.async_remove_storage(hass, entry)
 
 
 async def _options_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -100,7 +111,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return False
 
     if entry.minor_version < 2:
-        # Drop the session cookie and Keep settings, move remove_striked to options
+        # Drop the session cookie, move remove_striked to options
         data = {k: v for k, v in entry.data.items() if k not in LEGACY_KEYS}
         options = {k: v for k, v in entry.options.items() if k not in LEGACY_KEYS}
         if CONF_REMOVE_STRIKED in data:

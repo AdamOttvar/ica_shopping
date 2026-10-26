@@ -1,7 +1,7 @@
 # 🛒 ICA Shopping – Home Assistant Integration
 
-Sync an ICA shopping list with a Home Assistant to-do list, and add items to it
-with the Home Assistant voice assistant.
+Sync an ICA shopping list with a Home Assistant to-do list, such as the built-in
+shopping list, and add items to it with the Home Assistant voice assistant.
 
 The integration logs in the same way as the ICA app, with your personal ID number
 and ICA PIN code. The login is renewed automatically, so there is no session
@@ -33,24 +33,35 @@ action is called. ICA does not push updates.
 
 To use several shopping lists, add the integration once per list.
 
+### Sync with a Home Assistant to-do list
+
+Pick a to-do list under "Sync with to-do list" (during setup or later under
+Configure), e.g. `todo.shopping_list` from the built-in Shopping list integration.
+The integration then keeps the two lists in sync both ways:
+
+- Items added, checked off or removed in the Home Assistant list (in the app, on a
+  dashboard or by voice) are written to ICA within a second.
+- Changes made in ICA show up in Home Assistant on the next update, or when
+  `ica_shopping.refresh` is called.
+- A checked item in Home Assistant is a struck item in ICA.
+- Items are matched on their text, ignoring case.
+
+The first sync after setup only adds: items that are on just one of the lists are
+copied to the other one. After that, removals are synced too.
+
 ### Upgrading from the session ID version
 
 Earlier versions logged in with the `thSessionId` cookie and could sync with a
 Google Keep to-do list. After upgrading, Home Assistant asks you to log in again
 (Settings -> Devices & Services shows that the integration needs attention). Enter your personal ID
-number and PIN, and the integration keeps using the same list and sensor. The sync
-with another to-do entity (such as Google Keep) has been removed. The ICA list is now a
-to-do list of its own, so use that one instead.
+number and PIN, and the integration keeps using the same list and sensor. If you
+synced with a to-do list before, check that it is still selected under Configure.
 
 ## Entities and actions
 
 - `sensor.ica_<list>_shoppinglist` – the number of items in the list. The attributes
   hold the list name (`list_name`), the items (`item_1`, `item_2`, ...) and the
   checked items (`striked_item_1`, ...).
-- `todo.ica_<list>_shopping_list` (named "Inköpslista" in Swedish) – the ICA list as a
-  Home Assistant to-do list. It shows up under To-do lists in the sidebar, where you can
-  add, check, rename and remove items, and the changes are written to ICA right away.
-  Checked items are the ones that are struck in the ICA app.
 - `ica_shopping.add_item` – adds an item (`text`) to the list. `list_id` can be set to
   add to another list in the same ICA account.
 - `ica_shopping.refresh` – fetches the list from ICA. If enabled in the options, the

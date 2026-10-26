@@ -16,6 +16,8 @@ from homeassistant.config_entries import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -32,6 +34,7 @@ from .const import (
     CONF_ICA_LIST_ID,
     CONF_ICA_PIN,
     CONF_REMOVE_STRIKED,
+    CONF_TODO_ENTITY_ID,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -87,6 +90,23 @@ def _list_selector(lists: list[dict[str, Any]]) -> SelectSelector:
             mode=SelectSelectorMode.DROPDOWN,
         )
     )
+
+
+def _todo_field(default: str | None) -> dict:
+    """Optional to-do entity to sync with, cleared by leaving it empty."""
+    return {
+        vol.Optional(
+            CONF_TODO_ENTITY_ID, description={"suggested_value": default}
+        ): EntitySelector(EntitySelectorConfig(domain="todo"))
+    }
+
+
+def _settings(user_input: dict[str, Any]) -> dict[str, Any]:
+    return {
+        CONF_TODO_ENTITY_ID: user_input.get(CONF_TODO_ENTITY_ID) or None,
+        CONF_REMOVE_STRIKED: user_input[CONF_REMOVE_STRIKED],
+        CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
+    }
 
 
 def _scan_interval_selector() -> NumberSelector:
@@ -164,17 +184,20 @@ class ICAConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(
                 title=the_list.get("title") or list_id,
                 data={**self._login_data, CONF_ICA_LIST_ID: list_id},
-                options={
-                    CONF_REMOVE_STRIKED: user_input[CONF_REMOVE_STRIKED],
-                    CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
-                },
+                options=_settings(user_input),
             )
+
+        # The list of the built-in Shopping list integration, if it is set up
+        default_todo = (
+            "todo.shopping_list" if self.hass.states.get("todo.shopping_list") else None
+        )
 
         return self.async_show_form(
             step_id="list",
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_ICA_LIST_ID): _list_selector(self._lists),
+                    **_todo_field(default_todo),
                     vol.Required(CONF_REMOVE_STRIKED, default=True): BooleanSelector(),
                     vol.Required(
                         CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL
@@ -250,17 +273,14 @@ class ICAOptionsFlowHandler(OptionsFlow):
         entry = self.config_entry
         if user_input is not None:
             return self.async_create_entry(
-                data={
-                    **entry.options,
-                    CONF_REMOVE_STRIKED: user_input[CONF_REMOVE_STRIKED],
-                    CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
-                }
+                data={**entry.options, **_settings(user_input)}
             )
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    **_todo_field(entry_option(entry, CONF_TODO_ENTITY_ID)),
                     vol.Required(
                         CONF_REMOVE_STRIKED,
                         default=entry_option(entry, CONF_REMOVE_STRIKED, True),
