@@ -126,6 +126,14 @@ class IcaShoppingCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not self._apply_updated_list(list_id, updated):
             await self.async_request_refresh()
 
+    async def async_sync(self, changes: dict[str, Any]) -> None:
+        """Push created/changed/deleted rows of the tracked list."""
+        updated = await self._async_api_action(
+            lambda: self.api.sync_shopping_list(self.list_id, changes)
+        )
+        if not self._apply_updated_list(self.list_id, updated):
+            await self.async_request_refresh()
+
     async def async_refresh_list(self) -> None:
         """Fetch the list, and remove the checked items if configured to."""
         if self.remove_striked:

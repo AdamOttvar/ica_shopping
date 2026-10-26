@@ -18,11 +18,13 @@
         "data": {
           "ica_list_id": "Inköpslista",
           "remove_striked": "Rensa avbockade varor vid uppdatering",
-          "scan_interval": "Uppdateringsintervall"
+          "scan_interval": "Uppdateringsintervall",
+          "todo_entity_id": "Synka med att göra-lista"
         },
         "data_description": {
           "remove_striked": "Uppdatera-tjänsten tar bort varor som är avbockade i ICA",
-          "scan_interval": "Hur ofta listan hämtas från ICA"
+          "scan_interval": "Hur ofta listan hämtas från ICA",
+          "todo_entity_id": "Att göra-listan i Home Assistant som ska hållas i synk med ICA-listan, t.ex. todo.shopping_list. Lämna tomt för att inte synka."
         }
       },
       "reauth_confirm": {
@@ -58,11 +60,13 @@
         "title": "ICA Shopping",
         "data": {
           "remove_striked": "Rensa avbockade varor vid uppdatering",
-          "scan_interval": "Uppdateringsintervall"
+          "scan_interval": "Uppdateringsintervall",
+          "todo_entity_id": "Synka med att göra-lista"
         },
         "data_description": {
           "remove_striked": "Uppdatera-tjänsten tar bort varor som är avbockade i ICA",
-          "scan_interval": "Hur ofta listan hämtas från ICA"
+          "scan_interval": "Hur ofta listan hämtas från ICA",
+          "todo_entity_id": "Att göra-listan i Home Assistant som ska hållas i synk med ICA-listan, t.ex. todo.shopping_list. Lämna tomt för att inte synka."
         }
       }
     }

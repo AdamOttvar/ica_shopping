@@ -5,6 +5,7 @@ CONF_ICA_PIN = "pin_code"
 CONF_AUTH_STATE = "auth_state"
 CONF_ICA_LIST_ID = "ica_list_id"
 CONF_REMOVE_STRIKED = "remove_striked"
+CONF_TODO_ENTITY_ID = "todo_entity_id"
 
 DEFAULT_SCAN_INTERVAL = 15  # minutes
 
